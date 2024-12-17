@@ -1,10 +1,12 @@
 const { Telegraf } = require('telegraf');
-//const { sequelize } = require('./database/config');
+const { sequelize } = require('./database/config');
 require('dotenv').config();
-const game = require('./game');
+const { startGame, manageTopics } = require('./game');
 const { setupAnswerHandler } = require('./questions');
 const { gameData } = require('./gameData');
-//const { findOrCreateUser, isAdmin } = require('./services/userService');
+
+
+//const seedDatabase = require('./database/data/seed');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
@@ -12,39 +14,34 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 // {
 //     try
 //     {
-//         await sequelize.sync({ ...sequelize.syncOptions, alter: true });
-//         console.log('Database synchronized.');
+//         console.log('🌱 Starting the application...');
+//         await seedDatabase();
+//         console.log('✅ Application started successfully.');
 //     } catch (error)
 //     {
-//         console.error('Database synchronization failed:', error);
-//         process.exit(1); // Exit the process with failure
+//         console.error('❌ Application error:', error);
 //     }
 // })();
 
-
-// bot.use(async (ctx, next) =>
-// {
-//     if (ctx.message)
-//     {
-//         const { id, username } = ctx.message.from;
-//         await findOrCreateUser(id, username);
-//     }
-//     return next();
-// });
 
 
 bot.command('startgame', (ctx) =>
 {
     if (ctx.chat.type.includes('group'))
     {
-        game.startGame(ctx, bot);
+        startGame(ctx, bot);
     } else
     {
         ctx.reply('❌ يمكن تشغيل اللعبة فقط في المجموعات.');
     }
 });
 
-setupAnswerHandler(bot, gameData.players, gameData.topic);
+bot.command('manage_topics', async (ctx) =>
+{
+    await manageTopics(bot, ctx)
+});
+
+setupAnswerHandler(bot, gameData.players);
 
 bot.launch();
 console.log('✅ Bot is running...');

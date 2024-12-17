@@ -1,8 +1,9 @@
 const { Markup } = require('telegraf');
-const questions = require('./questions');
-
+const { askQuestion } = require('./questions');
+const { getAllTopics, getTopic } = require('./services/topicService')
 const { gameData, resetGame } = require('./gameData');
 const { showAlert, sendAndDelete } = require('./utils')
+const { getQuestions, addQuestion } = require('./services/questionService')
 
 async function joinPlayer(ctx)
 {
@@ -35,21 +36,14 @@ async function startGame(ctx, bot)
 
     gameData.startedBy = ctx.from.id;
 
-
-
-
     const getOrUpdateStartGameMessage = () =>
     {
-        const settingsMessage = `
-        إعدادات اللعبة:
-        - الموضوع: ${gameData.topic || 'لم يتم الاختيار'}
-        - حد الوقت للانضمام: ${gameData.timeLimit} ثانية
-        - وقت كل سؤال: ${gameData.questionTime} ثانية
-    `;
-        return `🎮 بدا لعبة جديدة:\n\n${settingsMessage}`
+        return ` بدا لعبة جديدة 🎮\n
+- الموضوع: ${gameData?.topic?.name ? `(${gameData?.topic?.name}) => ${gameData?.topic?.description}` : 'لم يتم الاختيار'}
+- حد الوقت للانضمام: ${gameData.timeLimit} ثانية
+- المكافأة: ${gameData.reward || 'لا يوجد'}
+- وقت كل سؤال: ${gameData.questionTime} ثانية`
     }
-
-
 
     let message = await ctx.reply(getOrUpdateStartGameMessage(), {
         ...Markup.inlineKeyboard([
@@ -57,6 +51,7 @@ async function startGame(ctx, bot)
             [Markup.button.callback(' اختر موضوع', 'setTopic')],
             [Markup.button.callback(' وقت كل سؤال', 'setQuestionTime')],
             [Markup.button.callback(' إعادة تعيين', 'reset')],
+            [Markup.button.callback(' تعيين المكافأة', 'setReward')],
             [Markup.button.callback('السماح بالانضمام وبدا اللعبة', 'startJoin')]
         ])
     });
@@ -98,13 +93,59 @@ async function startGame(ctx, bot)
 
         gameData.timeLimit = parseInt(ctx.match[1], 10);
 
-        await ctx.editMessageText(getOrUpdateStartGameMessage(), {
-            message_id: message.message_id,
-            reply_markup: message.reply_markup,
+        await ctx.deleteMessage(message.message_id)
 
+        message = await ctx.reply(getOrUpdateStartGameMessage(), {
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback(' حد الوقت للانضمام', 'setTimeLimit')],
+                [Markup.button.callback(' اختر موضوع', 'setTopic')],
+                [Markup.button.callback(' وقت كل سؤال', 'setQuestionTime')],
+                [Markup.button.callback(' إعادة تعيين', 'reset')],
+                [Markup.button.callback(' تعيين المكافأة', 'setReward')],
+                [Markup.button.callback('السماح بالانضمام وبدا اللعبة', 'startJoin')]
+            ])
         });
         await ctx.deleteMessage();
 
+    });
+
+    bot.action(/^setReward$/, async (ctx) =>
+    {
+        if (ctx.from.id !== gameData.startedBy)
+        {
+            await showAlert(ctx, '❌ لا يمكنك تغيير المكافأة. فقط المستخدم الذي بدأ اللعبة يمكنه ذلك.');
+            return;
+        }
+
+        await sendAndDelete(ctx, '✏️ قم بكتابة نص المكافأة التي ستُعرض للفائز:');
+
+        bot.on('message', async (messageCtx) =>
+        {
+            if (!gameData.isGameRunning && !gameData.isJoiningAllowed)
+            {
+                const rewardMessage = messageCtx.message.text;
+
+                if (rewardMessage)
+                {
+                    gameData.reward = rewardMessage; // حفظ المكافأة في بيانات اللعبة
+                    await sendAndDelete(ctx, '✅ تم تعيين المكافأة بنجاح!');
+                } else
+                {
+                    await sendAndDelete(ctx, '❌ لم يتم تحديد مكافأة صالحة. حاول مرة أخرى.');
+                }
+                await ctx.deleteMessage(message.message_id)
+                message = await ctx.reply(getOrUpdateStartGameMessage(), {
+                    ...Markup.inlineKeyboard([
+                        [Markup.button.callback(' حد الوقت للانضمام', 'setTimeLimit')],
+                        [Markup.button.callback(' اختر موضوع', 'setTopic')],
+                        [Markup.button.callback(' وقت كل سؤال', 'setQuestionTime')],
+                        [Markup.button.callback(' إعادة تعيين', 'reset')],
+                        [Markup.button.callback(' تعيين المكافأة', 'setReward')],
+                        [Markup.button.callback('السماح بالانضمام وبدا اللعبة', 'startJoin')]
+                    ])
+                });
+            }
+        });
     });
 
     bot.action(/^setTopic$/, async (ctx) =>
@@ -115,9 +156,11 @@ async function startGame(ctx, bot)
             return;
         }
 
+        const topics = await getAllTopics()
+
         await ctx.reply('📚 اختر موضوع اللعبة:', {
             ...Markup.inlineKeyboard(
-                Object.keys(gameData.topics).map((topic) => [{ text: topic, callback_data: `topic:${topic}` }])
+                topics.map((topic) => [{ text: topic.name, callback_data: `topic:${topic.id}` }])
             ),
         });
     });
@@ -132,10 +175,12 @@ async function startGame(ctx, bot)
 
         await ctx.reply('⏰ حدد الوقت لكل سؤال (بالثواني):', {
             ...Markup.inlineKeyboard([
-                [{ text: '5 ثواني', callback_data: 'questionTime:5' }],
-                [{ text: '10 ثواني', callback_data: 'questionTime:10' }],
-                [{ text: '15 ثانية', callback_data: 'questionTime:15' }],
-                [{ text: '30 ثانية', callback_data: 'questionTime:30' }]
+                [Markup.button.callback(' حد الوقت للانضمام', 'setTimeLimit')],
+                [Markup.button.callback(' اختر موضوع', 'setTopic')],
+                [Markup.button.callback(' وقت كل سؤال', 'setQuestionTime')],
+                [Markup.button.callback(' إعادة تعيين', 'reset')],
+                [Markup.button.callback(' تعيين المكافأة', 'setReward')],
+                [Markup.button.callback('السماح بالانضمام وبدا اللعبة', 'startJoin')]
             ])
         });
     });
@@ -157,9 +202,16 @@ async function startGame(ctx, bot)
 
         gameData.questionTime = parseInt(ctx.match[1], 10);
 
-        await ctx.editMessageText(getOrUpdateStartGameMessage(), {
-            message_id: message.message_id,
-            reply_markup: message.reply_markup
+        await ctx.deleteMessage(message.message_id)
+        message = await ctx.reply(getOrUpdateStartGameMessage(), {
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback(' حد الوقت للانضمام', 'setTimeLimit')],
+                [Markup.button.callback(' اختر موضوع', 'setTopic')],
+                [Markup.button.callback(' وقت كل سؤال', 'setQuestionTime')],
+                [Markup.button.callback(' إعادة تعيين', 'reset')],
+                [Markup.button.callback(' تعيين المكافأة', 'setReward')],
+                [Markup.button.callback('السماح بالانضمام وبدا اللعبة', 'startJoin')]
+            ])
         });
         await ctx.deleteMessage();
     });
@@ -179,23 +231,69 @@ async function startGame(ctx, bot)
             return;
         }
 
-        const selectedTopic = ctx.match[1];
-        if (!gameData.topics[selectedTopic])
+        const selectedTopicId = ctx.match[1];
+        const selectedTopic = await getTopic(selectedTopicId)
+        if (!selectedTopic)
         {
-            await showAlert(ctx, '❌ الموضوع غير متوفر.');
+            await showAlert(ctx, '❌no topic found');
             return;
         }
 
+
         gameData.topic = selectedTopic;
-        await ctx.editMessageText(getOrUpdateStartGameMessage(), {
-            message_id: message.message_id,
-            reply_markup: message.reply_markup
+        await ctx.deleteMessage(message.message_id)
+
+
+        message = await ctx.reply(getOrUpdateStartGameMessage(), {
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback(' حد الوقت للانضمام', 'setTimeLimit')],
+                [Markup.button.callback(' اختر موضوع', 'setTopic')],
+                [Markup.button.callback(' وقت كل سؤال', 'setQuestionTime')],
+                [Markup.button.callback(' إعادة تعيين', 'reset')],
+                [Markup.button.callback(' تعيين المكافأة', 'setReward')],
+                [Markup.button.callback('السماح بالانضمام وبدا اللعبة', 'startJoin')]
+            ])
         });
         await ctx.deleteMessage();
     });
 
+    bot.action(/^reset$/, async (ctx) =>
+    {
+
+        if (gameData.isGameRunning || gameData.isJoiningAllowed)
+        {
+            await showAlert(ctx, 'اللعبة بدات بالفعل');
+            return;
+        }
+
+        if (ctx.from.id !== gameData.startedBy)
+        {
+            await showAlert(ctx, '❌ فقط المستخدم الذي بدأ اللعبة يمكنه ذلك.');
+            return;
+        }
+        await ctx.deleteMessage(message.message_id)
+
+        message = await ctx.reply(getOrUpdateStartGameMessage(), {
+            ...Markup.inlineKeyboard([
+                [Markup.button.callback(' حد الوقت للانضمام', 'setTimeLimit')],
+                [Markup.button.callback(' اختر موضوع', 'setTopic')],
+                [Markup.button.callback(' وقت كل سؤال', 'setQuestionTime')],
+                [Markup.button.callback(' إعادة تعيين', 'reset')],
+                [Markup.button.callback(' تعيين المكافأة', 'setReward')],
+                [Markup.button.callback('السماح بالانضمام وبدا اللعبة', 'startJoin')]
+            ])
+        });
+
+    })
+
     bot.action(/^startJoin$/, async (ctx) =>
     {
+        if (ctx.from.id !== gameData.startedBy)
+        {
+            await showAlert(ctx, '❌ فقط المستخدم الذي بدأ اللعبة يمكنه ذلك.');
+            return;
+        }
+
         if (!gameData.topic)
         {
             await showAlert(ctx, 'يجب اختيار موضوع اولا');
@@ -208,15 +306,26 @@ async function startGame(ctx, bot)
             return;
         }
 
-        await ctx.deleteMessage(message.message_id);
+        const questions = await getQuestions(gameData.topic.id)
+        if (questions.length === 0)
+        {
+            await showAlert(ctx, 'no questions found for this topic');
+            return;
+        }
+
+        gameData.questions = questions
 
         gameData.isJoiningAllowed = true;
         const joinMessage = await ctx.reply(
-            `⏳ لديك ${gameData.timeLimit} ثانية للانضمام.\n\n📋تفاصيل اللعبة:\n- الموضوع: ${gameData.topic || 'لم يتم الاختيار'}\n- وقت كل سؤال: ${gameData.questionTime} ثانية`,
+            `⏳ لديك ${gameData.timeLimit} ثانية للانضمام.\n\n📋 تفاصيل اللعبة:\n
+        - الموضوع: ${gameData?.topic?.name || 'لم يتم الاختيار'}
+        - وقت كل سؤال: ${gameData.questionTime} ثانية
+        - المكافأة: ${gameData.reward || 'لا يوجد'}`,
             Markup.inlineKeyboard([
                 [Markup.button.callback('انضم للعبة', 'join_game')]
             ])
         );
+
 
         setTimeout(async () =>
         {
@@ -241,7 +350,7 @@ async function startGame(ctx, bot)
                 await sendAndDelete(ctx, `🚀 بدأت اللعبة!.`);
                 gameData.isGameRunning = true;
 
-                await questions.askQuestion(bot, ctx, 0, gameData.players, 0, gameData.topic);
+                await askQuestion(bot, ctx, 0, gameData.players, 0);
             }, 5000);
         }, gameData.timeLimit * 1000);
     })
@@ -254,4 +363,76 @@ async function startGame(ctx, bot)
     });
 }
 
-module.exports = { joinPlayer, startGame };
+const manageTopics = async (bot, ctx) =>
+{
+    const topics = await getAllTopics();
+    if (topics.length === 0)
+    {
+        await showAlert(ctx, 'No topics found.');
+        return;
+    }
+
+    const topicButtons = topics.map(topic => Markup.button.callback(topic.name, `select_topic:${topic.id}`));
+    await ctx.reply('📚 Available Topics:', Markup.inlineKeyboard(topicButtons));
+
+    bot.action(/^select_topic:(\d+)$/, async (ctx) =>
+    {
+        const topicId = ctx.match[1];
+        const topic = await getTopic(parseInt(topicId))
+
+        if (!topic)
+        {
+            await showAlert(ctx, '❌ Topic not found.');
+            return;
+        }
+
+        await ctx.reply(`🛠️ Manage Topic: ${topic.name}`, Markup.inlineKeyboard([
+            [Markup.button.callback('Add Question', `add_question:${topic.id}`)],
+            [Markup.button.callback('Edit Name', `edit_name:${topic.id}`)],
+            [Markup.button.callback('Back to Topics', 'view_topics')]
+        ]));
+    });
+
+    bot.action(/^add_question:(\d+)$/, async (ctx) =>
+    {
+        const topicId = ctx.match[1];
+        await ctx.reply('📜 Send the question and option with pool');
+
+        bot.on('message', async (ctx) =>
+        {
+            if (ctx.message.poll)
+            {
+
+                console.log(ctx.message.poll)
+                const poll = ctx.message.poll;
+
+
+                if (!poll || !poll.options || poll.options.length < 2)
+                {
+                    await ctx.reply('❌ Poll data is invalid or incomplete.');
+                    return;
+                }
+
+                const questionText = poll.question;
+                const options = poll.options.map(opt => opt.text.trim());
+
+                try
+                {
+                    await addQuestion(topicId, questionText, options, 0);
+
+                    await ctx.reply('✅ Question added successfully!');
+                } catch (error)
+                {
+                    console.error('Error adding question:', error);
+                    await ctx.reply('❌ Failed to add the question. Please try again.');
+                }
+            }
+
+        });
+    })
+
+
+
+}
+
+module.exports = { joinPlayer, startGame, manageTopics };

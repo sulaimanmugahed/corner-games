@@ -1,4 +1,5 @@
 let gameData = {
+    reward: null,
     startedBy: null,
     players: [],
     topic: null,
@@ -8,6 +9,8 @@ let gameData = {
     questionTime: 15,
     isGameRunning: false,
     isJoiningAllowed: false,
+    shuffledOptions: null,
+    questions: [],
     topics: {
         javascript: [
             { question: 'ما هي البيئة التطويرية الرسمية لبرمجة جافا سكريبت؟', options: ['Visual Studio Code', 'Eclipse', 'NetBeans'], correct: 0 },
@@ -260,13 +263,11 @@ let gameData = {
 function resetGame()
 {
     gameData.players = [];
-    gameData.topic = null;
     gameData.currentPlayerId = null;
-    gameData.timeLimit = 30;
     gameData.currentQuestionTimeout = null;
-    gameData.questionTime = null
     gameData.isGameRunning = false;
     gameData.isJoiningAllowed = false;
+    gameData.shuffledOptions = null;
 }
 
 

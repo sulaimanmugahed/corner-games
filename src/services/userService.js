@@ -2,10 +2,15 @@ const User = require('../database/models/User');
 
 async function findOrCreateUser(telegramId, username)
 {
-    return await User.findOrCreate({
-        where: { telegramId },
-        defaults: { username },
-    });
+    const existingUser = await User.findOne({ where: { telegramId } });
+
+    if (existingUser)
+    {
+        return existingUser;
+    } else
+    {
+        return await User.create({ telegramId, username });
+    }
 }
 
 async function isAdmin(telegramId)
